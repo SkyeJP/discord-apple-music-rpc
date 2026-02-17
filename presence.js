@@ -3,13 +3,13 @@ const { Client, RichPresence } = require('discord.js-selfbot-v13');
 const fetch = require('node-fetch');
 const dns = require('dns');
 
-// Force Linux to prioritize IPv4 to prevent DNS-related "INVALID_URL" errors
+// Force Linux to prioritize IPv4 to solve DNS-related "INVALID_URL" ghosts
 dns.setDefaultResultOrder('ipv4first');
 
 const client = new Client();
-const TOKEN = process.env.DISCORD_TOKEN ? process.env.DISCORD_TOKEN.trim() : "";
-const USER = process.env.LASTFM_USER ? process.env.LASTFM_USER.trim() : "";
-const KEY = process.env.LASTFM_API_KEY ? process.env.LASTFM_API_KEY.trim() : "";
+const TOKEN = process.env.DISCORD_TOKEN?.trim() || "";
+const USER = process.env.LASTFM_USER?.trim() || "";
+const KEY = process.env.LASTFM_API_KEY?.trim() || "";
 
 async function updatePresence() {
     const params = new URLSearchParams({
@@ -23,12 +23,10 @@ async function updatePresence() {
     const target = `http://ws.audioscrobbler.com/2.0/?${params.toString()}`;
 
     try {
-        const response = await fetch(target, { timeout: 15000 });
+        // Increased timeout to 20s to account for your server's slow connection
+        const response = await fetch(target, { timeout: 20000 });
         
-        if (!response.ok) {
-            console.log(`[${new Date().toLocaleTimeString()}] ⚠️ API Temporary Hiccup (${response.status})`);
-            return;
-        }
+        if (!response.ok) return;
 
         const data = await response.json();
         const track = data?.recenttracks?.track?.[0] || data?.recenttracks?.track;
@@ -54,11 +52,11 @@ async function updatePresence() {
             console.log(`[${new Date().toLocaleTimeString()}] ⏸️ Idle.`);
         }
     } catch (err) {
-        // Silencing the flicker if it's a known networking "INVALID_URL" ghost
-        if (err.message.includes('INVALID_URL')) {
-            console.log(`[${new Date().toLocaleTimeString()}] 📡 Network jitter detected, retrying in next cycle...`);
+        // Silencing the common network jitter logs to keep your console clean
+        if (err.message.includes('INVALID_URL') || err.name === 'AbortError') {
+            // Do nothing, just wait for the next 30s cycle
         } else {
-            console.error("❌ Fetch Error:", err.message);
+            console.error("❌ Connection Error:", err.message);
         }
     }
 }
