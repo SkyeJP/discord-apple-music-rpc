@@ -1,31 +1,34 @@
 require('dotenv').config();
 const { Client, RichPresence } = require('discord.js-selfbot-v13');
-const axios = require('axios');
+const fetch = require('node-fetch'); // Switched to node-fetch
 
 const client = new Client();
 
-// This function strips EVERYTHING except basic alphanumeric characters
-const superClean = (str) => str ? str.replace(/[^a-zA-Z0-9]/g, '') : "";
-
 const TOKEN = process.env.DISCORD_TOKEN ? process.env.DISCORD_TOKEN.trim() : "";
-const LASTFM_USER = superClean(process.env.LASTFM_USER);
-const LASTFM_API_KEY = superClean(process.env.LASTFM_API_KEY);
-const DISCORD_APP_ID = superClean(process.env.DISCORD_APP_ID) || "1108588077900898414";
+const LASTFM_USER = process.env.LASTFM_USER ? process.env.LASTFM_USER.trim() : "";
+const LASTFM_API_KEY = process.env.LASTFM_API_KEY ? process.env.LASTFM_API_KEY.trim() : "";
+const DISCORD_APP_ID = process.env.DISCORD_APP_ID || "1108588077900898414";
 
 async function updatePresence() {
     try {
-        // Build the URL using the native class to ensure it's valid from the start
-        const apiURL = new URL("http://ws.audioscrobbler.com/2.0/");
-        apiURL.searchParams.set("method", "user.getrecenttracks");
-        apiURL.searchParams.set("user", LASTFM_USER);
-        apiURL.searchParams.set("api_key", LASTFM_API_KEY);
-        apiURL.searchParams.set("format", "json");
-        apiURL.searchParams.set("limit", "1");
+        // Construct the URL using pure objects to bypass string parsing errors
+        const params = new URLSearchParams();
+        params.append("method", "user.getrecenttracks");
+        params.append("user", LASTFM_USER);
+        params.append("api_key", LASTFM_API_KEY);
+        params.append("format", "json");
+        params.append("limit", "1");
 
-        // Use the href directly from the validated URL object
-        const response = await axios.get(apiURL.href, { timeout: 10000 });
+        const targetUrl = `http://ws.audioscrobbler.com/2.0/?${params.toString()}`;
         
-        const track = response.data?.recenttracks?.track;
+        // Log it so we can verify there are no hidden %0D (carriage returns)
+        console.log(`[${new Date().toLocaleTimeString()}] Requesting: ${targetUrl}`);
+
+        const response = await fetch(targetUrl, { timeout: 10000 });
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        
+        const data = await response.json();
+        const track = data?.recenttracks?.track;
         if (!track) return;
 
         const currentTrack = Array.isArray(track) ? track[0] : track;
@@ -43,14 +46,13 @@ async function updatePresence() {
                 .addButton('View on Last.fm', currentTrack.url);
 
             client.user.setPresence({ activities: [pr] });
-            console.log(`[${new Date().toLocaleTimeString()}] ✅ Playing: ${currentTrack.name}`);
+            console.log(`✅ Success: ${currentTrack.name}`);
         } else {
             client.user.setPresence({ activities: [] });
-            console.log(`[${new Date().toLocaleTimeString()}] ⏸️ Idle`);
+            console.log("⏸️ Idle.");
         }
     } catch (error) {
-        console.error("❌ Request Failed:", error.message);
-        // If this still says INVALID_URL, the issue is your Docker Network/DNS
+        console.error("❌ Process Error:", error.message);
     }
 }
 
