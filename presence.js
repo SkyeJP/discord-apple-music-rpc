@@ -4,44 +4,30 @@ const axios = require('axios');
 
 const client = new Client();
 
-// Force clean all variables to remove hidden spaces or newlines
-const clean = (str) => str ? str.replace(/[\r\n\t ]/g, '') : "";
+// Aggressively strip EVERYTHING that isn't a standard character
+const clean = (str) => str ? str.replace(/[^a-zA-Z0-9_.-]/g, '') : "";
 
-const TOKEN = clean(process.env.DISCORD_TOKEN);
+const TOKEN = process.env.DISCORD_TOKEN ? process.env.DISCORD_TOKEN.trim() : ""; // Token needs to keep its dots/dashes
 const LASTFM_USER = clean(process.env.LASTFM_USER);
 const LASTFM_API_KEY = clean(process.env.LASTFM_API_KEY);
 const DISCORD_APP_ID = clean(process.env.DISCORD_APP_ID) || "1108588077900898414";
 
 async function updatePresence() {
-    // Define the request configuration
-    const config = {
-        params: {
-            method: "user.getrecenttracks",
-            user: LASTFM_USER,
-            api_key: LASTFM_API_KEY,
-            format: "json",
-            limit: 1
-        },
-        timeout: 10000
-    };
-
-    // Construct and log the URL for debugging
-    const fullUrl = axios.getUri({
-        method: 'get',
-        url: 'http://ws.audioscrobbler.com/2.0/',
-        ...config
-    });
-    
-    console.log(`[${new Date().toLocaleTimeString()}] Fetching: ${fullUrl}`);
-
     try {
-        const response = await axios.get(`http://ws.audioscrobbler.com/2.0/`, config);
+        // Build URL via object to avoid string concatenation issues
+        const url = new URL("http://ws.audioscrobbler.com/2.0/");
+        url.searchParams.append("method", "user.getrecenttracks");
+        url.searchParams.append("user", LASTFM_USER);
+        url.searchParams.append("api_key", LASTFM_API_KEY);
+        url.searchParams.append("format", "json");
+        url.searchParams.append("limit", "1");
+
+        console.log(`[${new Date().toLocaleTimeString()}] Fetching: ${url.href}`);
+
+        const response = await axios.get(url.href, { timeout: 10000 });
         const data = response.data;
         
-        if (!data?.recenttracks?.track) {
-            console.log("⚠️ No track data found in response.");
-            return;
-        }
+        if (!data?.recenttracks?.track) return;
 
         let track = data.recenttracks.track;
         const isPlaying = Array.isArray(track)
@@ -71,14 +57,13 @@ async function updatePresence() {
                 .addButton('View on Last.fm', songInfo.trackUrl);
 
             client.user.setPresence({ activities: [pr] });
-            console.log(`✅ Success! Now showing: ${songInfo.title}`);
+            console.log(`✅ Update Successful: ${songInfo.title}`);
         } else {
             client.user.setPresence({ activities: [] });
-            console.log("⏸️ Nothing playing currently.");
+            console.log("⏸️ Idle (Nothing playing).");
         }
     } catch (error) {
-        console.error(`❌ Presence Update Error: ${error.message}`);
-        // If it fails with INVALID_URL, we'll see exactly why in the "Fetching:" log above.
+        console.error(`❌ Error: ${error.message}`);
     }
 }
 
@@ -88,6 +73,4 @@ client.on('ready', () => {
     setInterval(updatePresence, 30000); 
 });
 
-client.login(TOKEN).catch(err => {
-    console.error("🔥 Login Failed:", err.message);
-});
+client.login(TOKEN).catch(err => console.error("Login Failed:", err.message));
