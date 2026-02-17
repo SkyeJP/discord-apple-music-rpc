@@ -32,22 +32,21 @@ async function getSpotifyImage(trackName, artistName) {
 // 3. Main Presence Logic
 async function updatePresence() {
     try {
-        const apiUrl = `http://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user=${process.env.LASTFM_USER?.trim()}&api_key=${process.env.LASTFM_API_KEY?.trim()}&format=json&limit=1`;
-        const response = await axios.get(apiUrl, { timeout: 10000 });
-        const track = response.data?.recenttracks?.track?.[0];
+        const url = `http://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user=${process.env.LASTFM_USER}&api_key=${process.env.LASTFM_API_KEY}&format=json&limit=1`;
+        const res = await axios.get(url);
+        const track = res.data?.recenttracks?.track?.[0];
 
         if (!track || track?.["@attr"]?.nowplaying !== "true") {
             client.user.setPresence({ activities: [] });
-            console.log("⏸️ Idle - Not scrobbling.");
             return;
         }
 
         const title = track.name;
         const artist = track.artist["#text"];
         
-        // Prioritize Spotify for high-res art to avoid the question marks
-        let imageUrl = await getSpotifyImage(title, artist);
-        if (!imageUrl) imageUrl = track.image?.[3]?.["#text"];
+        // Use Spotify art if available, otherwise Last.fm
+        let rawImg = await getSpotifyImage(title, artist);
+        if (!rawImg) rawImg = track.image?.find(i => i.size === "extralarge")?.["#text"] || track.image?.[3]?.["#text"];
 
         const pr = new RichPresence(client)
             .setApplicationId("1108588077900898414")
@@ -56,24 +55,23 @@ async function updatePresence() {
             .setDetails(title)
             .setState(`by ${artist}`);
 
-        if (imageUrl) {
-            // Proxy fix for Selfbots
-            const proxyUrl = `mp:external/${imageUrl.replace(/^https?:\/\//, "")}`;
-            pr.setAssetsLargeImage(proxyUrl);
+        if (rawImg) {
+            // THE FIX: Standardize the URL and use the 'mp:external' prefix
+            const cleanUrl = rawImg.replace(/^https?:\/\//, "");
+            pr.setAssetsLargeImage(`mp:external/${cleanUrl}`);
             pr.setAssetsLargeText(track.album["#text"] || "Apple Music");
             
-            // Corner logo
-            pr.setAssetsSmallImage('apple-logo'); 
-            pr.setAssetsSmallText('Apple Music');
+            // NOTE: Only use setAssetsSmallImage if you uploaded 'apple-logo' to your Discord App
+            // If you haven't uploaded it, comment out the line below:
+            // pr.setAssetsSmallImage('apple-logo'); 
         }
 
         if (track.url) pr.addButton('Listen on Apple Music', track.url);
 
         client.user.setPresence({ activities: [pr] });
-        console.log(`✅ Playing: ${title}`);
-
-    } catch (error) {
-        console.error(`[ERROR] Cycle failed: ${error.message}`);
+        console.log(`✅ Image Set: ${rawImg ? "YES" : "NO"} | Track: ${title}`);
+    } catch (err) {
+        console.log(`❌ Image Logic Error: ${err.message}`);
     }
 }
 
