@@ -9,25 +9,8 @@ const spotifyApi = new SpotifyWebApi({
     clientSecret: process.env.SPOTIFY_CLIENT_SECRET
 });
 
-// Cache Spotify token
-let tokenExpiration = 0;
-async function getSpotifyToken() {
-    if (Date.now() < tokenExpiration) return;
-    const data = await spotifyApi.clientCredentialsGrant();
-    spotifyApi.setAccessToken(data.body['access_token']);
-    tokenExpiration = Date.now() + (data.body['expires_in'] * 1000);
-}
-
-async function getSpotifyImage(trackName, artistName) {
-    try {
-        await getSpotifyToken();
-        const search = await spotifyApi.searchTracks(`track:${trackName} artist:${artistName}`, { limit: 1 });
-        return search.body.tracks.items[0]?.album?.images[0]?.url || null;
-    } catch (e) {
-        console.log(`[DEBUG] Spotify search failed: ${e.message}`);
-        return null;
-    }
-}
+// The placeholder hash identified in the Vencord source
+const LASTFM_PLACEHOLDER_HASH = "2a96cbd8b46e442fc41c2b86b821562f";
 
 async function updatePresence() {
     try {
@@ -37,50 +20,45 @@ async function updatePresence() {
 
         if (!track || track?.["@attr"]?.nowplaying !== "true") {
             client.user.setPresence({ activities: [] });
-            console.log("⏸️ Idle.");
             return;
         }
 
         const title = track.name;
         const artist = track.artist["#text"];
-        
-        // 1. Try Spotify for high-res art, fallback to Last.fm
-        let imageUrl = await getSpotifyImage(title, artist);
-        if (!imageUrl) imageUrl = track.image?.[3]?.["#text"];
+        const lfmImg = track.image?.find(x => x.size === "large")?.["#text"];
+
+        // Vencord-style logic: Check if image is just the Last.fm placeholder
+        const hasRealArt = lfmImg && !lfmImg.includes(LASTFM_PLACEHOLDER_HASH);
+
+        let finalImageUrl = null;
+        if (!hasRealArt) {
+            // If Last.fm has no art, definitely use Spotify
+            finalImageUrl = await getSpotifyImage(title, artist);
+        } else {
+            finalImageUrl = lfmImg;
+        }
 
         const pr = new RichPresence(client)
             .setApplicationId("1108588077900898414")
             .setType('LISTENING')
-            .setName('Apple Music') // Mimics "Listening to Apple Music"
+            .setName('Apple Music')
             .setDetails(title)
             .setState(`by ${artist}`);
 
-        if (imageUrl) {
-            // Use mp:external to bypass Discord's proxy block
-            const proxyUrl = `mp:external/${imageUrl.replace(/^https?:\/\//, "")}`;
-            pr.setAssetsLargeImage(proxyUrl);
-            pr.setAssetsLargeText(track.album["#text"] || "Apple Music");
-            
-            // 2. Corner Logo Implementation
-            // 'apple-logo' must be an asset name uploaded to your Discord Dev Portal
-            pr.setAssetsSmallImage('apple-logo'); 
-            pr.setAssetsSmallText('Apple Music');
+        if (finalImageUrl) {
+            // Using the proxy fix we discovered
+            const cleanUrl = finalImageUrl.replace(/^https?:\/\//, "");
+            pr.setAssetsLargeImage(`mp:external/${cleanUrl}`);
+            pr.setAssetsSmallImage('apple-logo'); // Matches Vencord's small_image logic
         }
 
         pr.addButton('Listen on Apple Music', track.url);
 
         client.user.setPresence({ activities: [pr] });
-        console.log(`✅ Playing: ${title} (Spotify Art: ${imageUrl ? 'Yes' : 'No'})`);
-
+        console.log(`✅ Now Playing: ${title}`);
     } catch (error) {
-        console.error(`[ERROR] ${error.message}`);
+        console.error("Presence Update Failed:", error.message);
     }
 }
 
-client.on('ready', () => {
-    console.log(`🚀 System Online: ${client.user.tag}`);
-    setInterval(updatePresence, 30000);
-    updatePresence();
-});
-
-client.login(process.env.DISCORD_TOKEN);
+// ... (rest of your Spotify and Login logic)
