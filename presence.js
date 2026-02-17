@@ -57,7 +57,7 @@ async function updatePresence() {
 client.on('ready', () => {
     console.log(`🚀 System Online: ${client.user.tag}`);
     // Run every 30 seconds
-    setInterval(updatePresence, 30000);
+    setInterval(updatePresence, 16000);
     updatePresence();
 });
 
