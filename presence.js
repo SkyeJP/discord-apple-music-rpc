@@ -11,28 +11,29 @@ const DISCORD_APP_ID = process.env.DISCORD_APP_ID || "1108588077900898414";
 
 async function updatePresence() {
     try {
-        const res = await axios.get("http://ws.audioscrobbler.com/2.0/", {
+        // We use 'params' so Axios builds the URL for us, avoiding INVALID_URL errors.
+        const response = await axios.get(`http://ws.audioscrobbler.com/2.0/`, {
             params: {
                 method: "user.getrecenttracks",
-                user: LASTFM_USER.trim(),
+                user: LASTFM_USER.trim(), // Strips accidental spaces from .env
                 api_key: LASTFM_API_KEY.trim(),
                 format: "json",
                 limit: 1
             }
         });
 
-        const data = res.data;
+        const data = response.data;
         if (!data.recenttracks || !data.recenttracks.track) return;
 
         let track = data.recenttracks.track;
         
-        // Handle both Array and Object responses (from your bot logic)
+        // Inspired by your bot: Handle both Array and Object responses
         const isPlaying = Array.isArray(track)
             ? track[0]?.["@attr"]?.nowplaying === "true"
             : track?.["@attr"]?.nowplaying === "true";
 
         if (isPlaying) {
-            // Normalize track object
+            // Normalize track object if it's an array
             if (Array.isArray(track)) track = track[0];
 
             const songInfo = {
@@ -56,13 +57,18 @@ async function updatePresence() {
                 .addButton('View on Last.fm', songInfo.trackUrl);
 
             client.user.setPresence({ activities: [pr] });
-            console.log(`[${new Date().toLocaleTimeString()}] 🎵 Now Listening: ${songInfo.title} by ${songInfo.artist}`);
+            console.log(`[${new Date().toLocaleTimeString()}] 🎵 Now Listening: ${songInfo.title}`);
         } else {
-            // Clear presence if not playing
+            // Clear presence if nothing is playing
             client.user.setPresence({ activities: [] });
         }
-    } catch (err) {
-        console.error("Presence Update Error:", err.message);
+    } catch (error) {
+        // Detailed logging to catch why the URL might be failing
+        if (error.code === 'ERR_INVALID_URL') {
+            console.error("❌ Presence Update Error: INVALID_URL. Check if LASTFM_USER or API_KEY are empty.");
+        } else {
+            console.error("Presence Update Error:", error.message);
+        }
     }
 }
 
