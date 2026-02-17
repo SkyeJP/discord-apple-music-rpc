@@ -4,29 +4,36 @@ const axios = require('axios');
 
 const client = new Client();
 
-// Aggressively strip EVERYTHING that isn't a standard character
+// Cleaning utility
 const clean = (str) => str ? str.replace(/[^a-zA-Z0-9_.-]/g, '') : "";
 
-const TOKEN = process.env.DISCORD_TOKEN ? process.env.DISCORD_TOKEN.trim() : ""; // Token needs to keep its dots/dashes
+const TOKEN = process.env.DISCORD_TOKEN ? process.env.DISCORD_TOKEN.trim() : "";
 const LASTFM_USER = clean(process.env.LASTFM_USER);
 const LASTFM_API_KEY = clean(process.env.LASTFM_API_KEY);
 const DISCORD_APP_ID = clean(process.env.DISCORD_APP_ID) || "1108588077900898414";
 
 async function updatePresence() {
+    // Manually defined URL - No variables inside the string to test if it's a parsing error
+    const base = "http://ws.audioscrobbler.com/2.0/";
+    
     try {
-        // Build URL via object to avoid string concatenation issues
-        const url = new URL("http://ws.audioscrobbler.com/2.0/");
-        url.searchParams.append("method", "user.getrecenttracks");
-        url.searchParams.append("user", LASTFM_USER);
-        url.searchParams.append("api_key", LASTFM_API_KEY);
-        url.searchParams.append("format", "json");
-        url.searchParams.append("limit", "1");
+        console.log(`[${new Date().toLocaleTimeString()}] Fetching for user: ${LASTFM_USER}`);
 
-        console.log(`[${new Date().toLocaleTimeString()}] Fetching: ${url.href}`);
+        const response = await axios({
+            method: 'get',
+            url: base,
+            // Using the 'params' object is the safest way to avoid INVALID_URL
+            params: {
+                method: "user.getrecenttracks",
+                user: LASTFM_USER,
+                api_key: LASTFM_API_KEY,
+                format: "json",
+                limit: 1
+            },
+            timeout: 15000
+        });
 
-        const response = await axios.get(url.href, { timeout: 10000 });
         const data = response.data;
-        
         if (!data?.recenttracks?.track) return;
 
         let track = data.recenttracks.track;
@@ -37,40 +44,36 @@ async function updatePresence() {
         if (isPlaying) {
             if (Array.isArray(track)) track = track[0];
 
-            const songInfo = {
-                title: track.name,
-                artist: track.artist?.["#text"] || "Unknown Artist",
-                album: track.album?.["#text"] || "Unknown Album",
-                trackUrl: track.url,
-                image: track.image[3]?.["#text"] || null,
-            };
-
             const pr = new RichPresence(client)
                 .setApplicationId(DISCORD_APP_ID)
                 .setType('LISTENING')
-                .setName(songInfo.title)
-                .setDetails(songInfo.title)
-                .setState(`by ${songInfo.artist}`)
-                .setAssetsLargeImage(songInfo.image)
-                .setAssetsLargeText(songInfo.album)
+                .setName(track.name)
+                .setDetails(track.name)
+                .setState(`by ${track.artist?.["#text"] || "Unknown"}`)
+                .setAssetsLargeImage(track.image[3]?.["#text"])
                 .setAssetsSmallImage('lastfm-small')
-                .addButton('View on Last.fm', songInfo.trackUrl);
+                .addButton('View on Last.fm', track.url);
 
             client.user.setPresence({ activities: [pr] });
-            console.log(`✅ Update Successful: ${songInfo.title}`);
+            console.log(`✅ Success: ${track.name}`);
         } else {
             client.user.setPresence({ activities: [] });
-            console.log("⏸️ Idle (Nothing playing).");
+            console.log("⏸️ Idle.");
         }
     } catch (error) {
-        console.error(`❌ Error: ${error.message}`);
+        // This will print the exact URL that AXIOS tried to use
+        if (error.config) {
+            console.error("❌ Failed URL:", axios.getUri(error.config));
+        }
+        console.error("❌ Error Type:", error.code);
+        console.error("❌ Message:", error.message);
     }
 }
 
 client.on('ready', () => {
-    console.log(`Presence system active for ${client.user.tag}`);
+    console.log(`System Online: ${client.user.tag}`);
     updatePresence();
-    setInterval(updatePresence, 30000); 
+    setInterval(updatePresence, 30000);
 });
 
-client.login(TOKEN).catch(err => console.error("Login Failed:", err.message));
+client.login(TOKEN).catch(err => console.error("Login Error:", err.message));
