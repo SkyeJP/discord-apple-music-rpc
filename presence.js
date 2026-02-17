@@ -4,39 +4,50 @@ const axios = require('axios');
 const SpotifyWebApi = require('spotify-web-api-node');
 
 const client = new Client();
+
+// 1. Setup Spotify API
 const spotifyApi = new SpotifyWebApi({
-    clientId: process.env.SPOTIFY_CLIENT_ID,
-    clientSecret: process.env.SPOTIFY_CLIENT_SECRET
+    clientId: process.env.SPOTIFY_CLIENT_ID?.trim(),
+    clientSecret: process.env.SPOTIFY_CLIENT_SECRET?.trim()
 });
 
-// The placeholder hash identified in the Vencord source
-const LASTFM_PLACEHOLDER_HASH = "2a96cbd8b46e442fc41c2b86b821562f";
+let tokenExpiration = 0;
 
+// 2. Function to get high-quality art from Spotify
+async function getSpotifyImage(trackName, artistName) {
+    try {
+        if (Date.now() > tokenExpiration) {
+            const data = await spotifyApi.clientCredentialsGrant();
+            spotifyApi.setAccessToken(data.body['access_token']);
+            tokenExpiration = Date.now() + (data.body['expires_in'] * 1000);
+        }
+        const search = await spotifyApi.searchTracks(`track:${trackName} artist:${artistName}`, { limit: 1 });
+        return search.body.tracks.items[0]?.album?.images[0]?.url || null;
+    } catch (e) {
+        console.log(`[DEBUG] Spotify lookup failed (usually bad credentials): ${e.message}`);
+        return null;
+    }
+}
+
+// 3. Main Presence Logic
 async function updatePresence() {
     try {
-        const apiUrl = `http://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user=${process.env.LASTFM_USER}&api_key=${process.env.LASTFM_API_KEY}&format=json&limit=1`;
+        const apiUrl = `http://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user=${process.env.LASTFM_USER?.trim()}&api_key=${process.env.LASTFM_API_KEY?.trim()}&format=json&limit=1`;
         const response = await axios.get(apiUrl, { timeout: 10000 });
         const track = response.data?.recenttracks?.track?.[0];
 
         if (!track || track?.["@attr"]?.nowplaying !== "true") {
             client.user.setPresence({ activities: [] });
+            console.log("⏸️ Idle - Not scrobbling.");
             return;
         }
 
         const title = track.name;
         const artist = track.artist["#text"];
-        const lfmImg = track.image?.find(x => x.size === "large")?.["#text"];
-
-        // Vencord-style logic: Check if image is just the Last.fm placeholder
-        const hasRealArt = lfmImg && !lfmImg.includes(LASTFM_PLACEHOLDER_HASH);
-
-        let finalImageUrl = null;
-        if (!hasRealArt) {
-            // If Last.fm has no art, definitely use Spotify
-            finalImageUrl = await getSpotifyImage(title, artist);
-        } else {
-            finalImageUrl = lfmImg;
-        }
+        
+        // Prioritize Spotify for high-res art to avoid the question marks
+        let imageUrl = await getSpotifyImage(title, artist);
+        if (!imageUrl) imageUrl = track.image?.[3]?.["#text"];
 
         const pr = new RichPresence(client)
             .setApplicationId("1108588077900898414")
@@ -45,20 +56,42 @@ async function updatePresence() {
             .setDetails(title)
             .setState(`by ${artist}`);
 
-        if (finalImageUrl) {
-            // Using the proxy fix we discovered
-            const cleanUrl = finalImageUrl.replace(/^https?:\/\//, "");
-            pr.setAssetsLargeImage(`mp:external/${cleanUrl}`);
-            pr.setAssetsSmallImage('apple-logo'); // Matches Vencord's small_image logic
+        if (imageUrl) {
+            // Proxy fix for Selfbots
+            const proxyUrl = `mp:external/${imageUrl.replace(/^https?:\/\//, "")}`;
+            pr.setAssetsLargeImage(proxyUrl);
+            pr.setAssetsLargeText(track.album["#text"] || "Apple Music");
+            
+            // Corner logo
+            pr.setAssetsSmallImage('apple-logo'); 
+            pr.setAssetsSmallText('Apple Music');
         }
 
-        pr.addButton('Listen on Apple Music', track.url);
+        if (track.url) pr.addButton('Listen on Apple Music', track.url);
 
         client.user.setPresence({ activities: [pr] });
-        console.log(`✅ Now Playing: ${title}`);
+        console.log(`✅ Playing: ${title}`);
+
     } catch (error) {
-        console.error("Presence Update Failed:", error.message);
+        console.error(`[ERROR] Cycle failed: ${error.message}`);
     }
 }
 
-// ... (rest of your Spotify and Login logic)
+// 4. Start the Bot
+client.on('ready', () => {
+    console.log(`🚀 System Online: ${client.user.tag}`);
+    updatePresence();
+    setInterval(updatePresence, 30000); // Update every 30 seconds
+});
+
+// 5. Critical Login Block (The part that was cut off!)
+const TOKEN = process.env.DISCORD_TOKEN?.trim();
+if (!TOKEN) {
+    console.error("FATAL: DISCORD_TOKEN is missing!");
+    process.exit(1);
+}
+
+client.login(TOKEN).catch(err => {
+    console.error("CRITICAL: Login failed!", err.message);
+    process.exit(1);
+});
