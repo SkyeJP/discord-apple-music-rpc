@@ -32,21 +32,27 @@ async function getSpotifyImage(trackName, artistName) {
 // 3. Main Presence Logic
 async function updatePresence() {
     try {
+        console.log("--- Starting Update Cycle ---");
         const url = `http://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user=${process.env.LASTFM_USER}&api_key=${process.env.LASTFM_API_KEY}&format=json&limit=1`;
         const res = await axios.get(url);
         const track = res.data?.recenttracks?.track?.[0];
 
         if (!track || track?.["@attr"]?.nowplaying !== "true") {
             client.user.setPresence({ activities: [] });
+            console.log("⏸️ Idle.");
             return;
         }
 
         const title = track.name;
         const artist = track.artist["#text"];
         
-        // Use Spotify art if available, otherwise Last.fm
+        // 1. Get the Image URL
         let rawImg = await getSpotifyImage(title, artist);
-        if (!rawImg) rawImg = track.image?.find(i => i.size === "extralarge")?.["#text"] || track.image?.[3]?.["#text"];
+        // Fallback to Last.fm if Spotify fails
+        if (!rawImg) {
+            rawImg = track.image?.find(i => i.size === "extralarge")?.["#text"] || 
+                     track.image?.find(i => i.size === "large")?.["#text"];
+        }
 
         const pr = new RichPresence(client)
             .setApplicationId("1108588077900898414")
@@ -55,23 +61,29 @@ async function updatePresence() {
             .setDetails(title)
             .setState(`by ${artist}`);
 
-        if (rawImg) {
-            // THE FIX: Standardize the URL and use the 'mp:external' prefix
+        // 2. THE IMAGE FIX
+        if (rawImg && rawImg.startsWith('http')) {
+            // Remove protocol and use mp:external prefix to satisfy Discord's proxy
             const cleanUrl = rawImg.replace(/^https?:\/\//, "");
-            pr.setAssetsLargeImage(`mp:external/${cleanUrl}`);
-            pr.setAssetsLargeText(track.album["#text"] || "Apple Music");
+            const proxyUrl = `mp:external/${cleanUrl}`;
             
-            // NOTE: Only use setAssetsSmallImage if you uploaded 'apple-logo' to your Discord App
-            // If you haven't uploaded it, comment out the line below:
-            // pr.setAssetsSmallImage('apple-logo'); 
+            try {
+                pr.setAssetsLargeImage(proxyUrl);
+                console.log(`[DEBUG] Proxy Image Set: ${proxyUrl}`);
+            } catch (imageErr) {
+                console.log(`[ERROR] Library rejected Image URL: ${imageErr.message}`);
+            }
+            
+            pr.setAssetsLargeText(track.album["#text"] || "Apple Music");
         }
 
         if (track.url) pr.addButton('Listen on Apple Music', track.url);
 
         client.user.setPresence({ activities: [pr] });
-        console.log(`✅ Image Set: ${rawImg ? "YES" : "NO"} | Track: ${title}`);
-    } catch (err) {
-        console.log(`❌ Image Logic Error: ${err.message}`);
+        console.log(`✅ Presence Updated: ${title}`);
+
+    } catch (error) {
+        console.log(`[ERROR] Logic Error: ${error.message}`);
     }
 }
 
