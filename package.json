@@ -1,0 +1,13 @@
+{
+  "name": "lastfm-discord-rpc",
+  "version": "1.0.0",
+  "description": "Always-on Last.fm Rich Presence for Discord",
+  "main": "presence.js",
+  "scripts": {
+    "start": "node presence.js"
+  },
+  "dependencies": {
+    "discord.js-selfbot-v13": "^3.4.4",
+    "axios": "^1.6.0"
+  }
+}
