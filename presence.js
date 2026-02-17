@@ -7,6 +7,14 @@ const TOKEN = process.env.DISCORD_TOKEN?.trim();
 const username = process.env.LASTFM_USER?.trim();
 const apiKey = process.env.LASTFM_API_KEY?.trim();
 
+// Helper to fix Last.fm image protocols and prevent INVALID_URL crashes
+const sanitizeImageUrl = (url) => {
+    if (!url || typeof url !== 'string') return null;
+    let cleanUrl = url.trim();
+    if (cleanUrl.startsWith('//')) cleanUrl = `https:${cleanUrl}`;
+    return cleanUrl.replace('http:', 'https:');
+};
+
 async function updatePresence() {
     console.log(`\n[${new Date().toLocaleTimeString()}] --- Starting Update Cycle ---`);
     
@@ -18,7 +26,7 @@ async function updatePresence() {
         const track = response.data?.recenttracks?.track?.[0] || response.data?.recenttracks?.track;
 
         if (!track) {
-            console.log(`[DEBUG] No track data found in response.`);
+            console.log(`[DEBUG] No track data found.`);
             return;
         }
 
@@ -26,39 +34,36 @@ async function updatePresence() {
         console.log(`[DEBUG] Status: ${isPlaying ? "Playing" : "Idle"}`);
 
         if (isPlaying) {
-            console.log(`[DEBUG] Raw Track Name: "${track.name}"`);
-            console.log(`[DEBUG] Raw Artist: "${track.artist?.["#text"]}"`);
-            console.log(`[DEBUG] Raw Album: "${track.album?.["#text"]}"`);
-            console.log(`[DEBUG] Raw Image URL: "${track.image?.[3]?.["#text"]}"`);
-            console.log(`[DEBUG] Raw Track URL: "${track.url}"`);
-
-            // Creating presence object
             const pr = new RichPresence(client).setApplicationId("1108588077900898414");
 
-            // Step-by-step building with individual try/catch to find the killer field
-            try {
-                pr.setType('LISTENING');
-                pr.setName(track.name || "Music");
-                pr.setDetails(track.name || "Unknown");
-                pr.setState(`by ${track.artist?.["#text"] || "Unknown"}`);
-                console.log(`[DEBUG] Text fields set successfully.`);
-            } catch (e) { console.log(`[ERROR] Failed setting text fields: ${e.message}`); }
+            // 1. Text Fields
+            pr.setType('LISTENING');
+            pr.setName(track.name || "Music");
+            pr.setDetails(track.name || "Unknown Track");
+            pr.setState(`by ${track.artist?.["#text"] || "Unknown Artist"}`);
 
-            try {
-                const img = track.image?.[3]?.["#text"];
-                if (img && img.includes('http')) {
-                    pr.setAssetsLargeImage(img);
-                    console.log(`[DEBUG] Image set successfully.`);
+            // 2. Image Handling with Sanitization
+            const rawImg = track.image?.[3]?.["#text"];
+            const cleanImg = sanitizeImageUrl(rawImg);
+            
+            if (cleanImg) {
+                try {
+                    pr.setAssetsLargeImage(cleanImg);
+                    console.log(`[DEBUG] Image set: ${cleanImg}`);
+                } catch (e) {
+                    console.log(`[ERROR] Library rejected Image URL: ${e.message}`);
                 }
-            } catch (e) { console.log(`[ERROR] Failed setting Image: ${e.message}`); }
+            }
+            
+            if (track.album?.["#text"]) pr.setAssetsLargeText(track.album["#text"]);
+            pr.setAssetsSmallImage('lastfm-small');
 
-            try {
-                if (track.url && track.url.startsWith('http')) {
-                    pr.addButton('View on Last.fm', track.url);
-                    console.log(`[DEBUG] Button set successfully.`);
-                }
-            } catch (e) { console.log(`[ERROR] Failed setting Button: ${e.message}`); }
+            // 3. Button Handling
+            if (track.url && track.url.startsWith('http')) {
+                pr.addButton('View on Last.fm', track.url);
+            }
 
+            // Apply Presence
             client.user.setPresence({ activities: [pr] });
             console.log(`[${new Date().toLocaleTimeString()}] ✅ Presence Updated!`);
         } else {
@@ -66,7 +71,12 @@ async function updatePresence() {
             console.log(`[${new Date().toLocaleTimeString()}] ⏸️ Idle - Presence Cleared.`);
         }
     } catch (error) {
-        console.error(`[CRITICAL ERROR] ${error.stack || error.message}`);
+        // Silencing common network timeouts to keep logs clean
+        if (error.code === 'ECONNABORTED') {
+            console.log(`[DEBUG] Last.fm request timed out. Retrying next cycle.`);
+        } else {
+            console.error(`[CRITICAL ERROR] ${error.message}`);
+        }
     }
 }
 
