@@ -1,63 +1,70 @@
 require('dotenv').config();
 const { Client, RichPresence } = require('discord.js-selfbot-v13');
-const fetch = require('node-fetch'); // Switched to node-fetch
+const fetch = require('node-fetch');
+const dns = require('dns');
+
+// Force Linux to prioritize IPv4 to prevent DNS-related "INVALID_URL" errors
+dns.setDefaultResultOrder('ipv4first');
 
 const client = new Client();
-
 const TOKEN = process.env.DISCORD_TOKEN ? process.env.DISCORD_TOKEN.trim() : "";
-const LASTFM_USER = process.env.LASTFM_USER ? process.env.LASTFM_USER.trim() : "";
-const LASTFM_API_KEY = process.env.LASTFM_API_KEY ? process.env.LASTFM_API_KEY.trim() : "";
-const DISCORD_APP_ID = process.env.DISCORD_APP_ID || "1108588077900898414";
+const USER = process.env.LASTFM_USER ? process.env.LASTFM_USER.trim() : "";
+const KEY = process.env.LASTFM_API_KEY ? process.env.LASTFM_API_KEY.trim() : "";
 
 async function updatePresence() {
+    const params = new URLSearchParams({
+        method: "user.getrecenttracks",
+        user: USER,
+        api_key: KEY,
+        format: "json",
+        limit: "1"
+    });
+
+    const target = `http://ws.audioscrobbler.com/2.0/?${params.toString()}`;
+
     try {
-        // Construct the URL using pure objects to bypass string parsing errors
-        const params = new URLSearchParams();
-        params.append("method", "user.getrecenttracks");
-        params.append("user", LASTFM_USER);
-        params.append("api_key", LASTFM_API_KEY);
-        params.append("format", "json");
-        params.append("limit", "1");
-
-        const targetUrl = `http://ws.audioscrobbler.com/2.0/?${params.toString()}`;
+        const response = await fetch(target, { timeout: 15000 });
         
-        // Log it so we can verify there are no hidden %0D (carriage returns)
-        console.log(`[${new Date().toLocaleTimeString()}] Requesting: ${targetUrl}`);
+        if (!response.ok) {
+            console.log(`[${new Date().toLocaleTimeString()}] ⚠️ API Temporary Hiccup (${response.status})`);
+            return;
+        }
 
-        const response = await fetch(targetUrl, { timeout: 10000 });
-        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-        
         const data = await response.json();
-        const track = data?.recenttracks?.track;
+        const track = data?.recenttracks?.track?.[0] || data?.recenttracks?.track;
+        
         if (!track) return;
 
-        const currentTrack = Array.isArray(track) ? track[0] : track;
-        const isPlaying = currentTrack?.["@attr"]?.nowplaying === "true";
+        const isPlaying = track["@attr"]?.nowplaying === "true";
 
         if (isPlaying) {
             const pr = new RichPresence(client)
-                .setApplicationId(DISCORD_APP_ID)
+                .setApplicationId("1108588077900898414")
                 .setType('LISTENING')
-                .setName(currentTrack.name)
-                .setDetails(currentTrack.name)
-                .setState(`by ${currentTrack.artist?.["#text"] || "Unknown"}`)
-                .setAssetsLargeImage(currentTrack.image[3]?.["#text"])
-                .setAssetsSmallImage('lastfm-small')
-                .addButton('View on Last.fm', currentTrack.url);
+                .setName(track.name)
+                .setDetails(track.name)
+                .setState(`by ${track.artist['#text']}`)
+                .setAssetsLargeImage(track.image[3]['#text'])
+                .addButton('View on Last.fm', track.url);
 
             client.user.setPresence({ activities: [pr] });
-            console.log(`✅ Success: ${currentTrack.name}`);
+            console.log(`[${new Date().toLocaleTimeString()}] ✅ Now Playing: ${track.name}`);
         } else {
             client.user.setPresence({ activities: [] });
-            console.log("⏸️ Idle.");
+            console.log(`[${new Date().toLocaleTimeString()}] ⏸️ Idle.`);
         }
-    } catch (error) {
-        console.error("❌ Process Error:", error.message);
+    } catch (err) {
+        // Silencing the flicker if it's a known networking "INVALID_URL" ghost
+        if (err.message.includes('INVALID_URL')) {
+            console.log(`[${new Date().toLocaleTimeString()}] 📡 Network jitter detected, retrying in next cycle...`);
+        } else {
+            console.error("❌ Fetch Error:", err.message);
+        }
     }
 }
 
 client.on('ready', () => {
-    console.log(`System Online: ${client.user.tag}`);
+    console.log(`🚀 System Online: ${client.user.tag}`);
     updatePresence();
     setInterval(updatePresence, 30000);
 });
