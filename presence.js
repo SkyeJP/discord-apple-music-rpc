@@ -43,37 +43,36 @@ async function updatePresence() {
 
         const title = track.name;
         const artist = track.artist["#text"];
-        
-        // 1. Get the Raw Image URL
         let rawImg = await getSpotifyImage(title, artist);
         if (!rawImg) rawImg = track.image?.find(i => i.size === "extralarge")?.["#text"];
 
-        // 2. Build Activity Object Manually
+        // FORCE A "PLAYING" STATUS (This often fixes proxy blocks)
         const activity = {
-            applicationId: "1108588077900898414",
-            type: 'LISTENING',
+            applicationId: "1108588077900898414", 
+            type: 'PLAYING', // Changed from LISTENING
             name: 'Apple Music',
             details: title,
             state: `by ${artist}`,
             assets: {
                 largeText: track.album["#text"] || "Apple Music",
-                // Only set assets if we have a valid image
-                ...(rawImg && { 
-                    largeImage: `mp:external/${rawImg.replace(/^https?:\/\//, "")}`
-                })
             },
             buttons: track.url ? [{ label: 'Listen on Apple Music', url: track.url }] : []
         };
 
-        // 3. Update Presence
+        if (rawImg) {
+            // Alternative proxy format: Some regions require 'https/' to be included
+            const proxyUrl = `mp:external/${rawImg.replace(/^https?:\/\//, "https/")}`;
+            activity.assets.largeImage = proxyUrl;
+            console.log(`[EXTERNAL] Testing Proxy: ${proxyUrl}`);
+        }
+
         client.user.setPresence({ activities: [activity] });
-        console.log(`✅ Final Attempt: ${title} | Img: ${rawImg ? "YES" : "NO"}`);
+        console.log(`✅ Update Sent: ${title}`);
 
     } catch (error) {
         console.log(`[ERROR] ${error.message}`);
     }
 }
-
 // 4. Start the Bot
 client.on('ready', () => {
     console.log(`🚀 System Online: ${client.user.tag}`);
