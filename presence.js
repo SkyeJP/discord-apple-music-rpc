@@ -7,76 +7,57 @@ const TOKEN = process.env.DISCORD_TOKEN?.trim();
 const username = process.env.LASTFM_USER?.trim();
 const apiKey = process.env.LASTFM_API_KEY?.trim();
 
-// Helper to fix Last.fm image protocols and prevent INVALID_URL crashes
-const sanitizeImageUrl = (url) => {
-    if (!url || typeof url !== 'string') return null;
-    let cleanUrl = url.trim();
-    if (cleanUrl.startsWith('//')) cleanUrl = `https:${cleanUrl}`;
-    return cleanUrl.replace('http:', 'https:');
-};
-
 async function updatePresence() {
     console.log(`\n[${new Date().toLocaleTimeString()}] --- Starting Update Cycle ---`);
     
     try {
         const apiUrl = `http://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user=${username}&api_key=${apiKey}&format=json&limit=1`;
-        console.log(`[DEBUG] Fetching from Last.fm...`);
         
         const response = await axios.get(apiUrl, { timeout: 15000, family: 4 });
         const track = response.data?.recenttracks?.track?.[0] || response.data?.recenttracks?.track;
 
-        if (!track) {
-            console.log(`[DEBUG] No track data found.`);
-            return;
-        }
+        if (!track) return;
 
         const isPlaying = track?.["@attr"]?.nowplaying === "true";
-        console.log(`[DEBUG] Status: ${isPlaying ? "Playing" : "Idle"}`);
 
         if (isPlaying) {
             const pr = new RichPresence(client).setApplicationId("1108588077900898414");
 
-            // 1. Text Fields
             pr.setType('LISTENING');
             pr.setName(track.name || "Music");
             pr.setDetails(track.name || "Unknown Track");
             pr.setState(`by ${track.artist?.["#text"] || "Unknown Artist"}`);
 
-            // 2. Image Handling with Sanitization
+            // IMAGE FIX: Use the 'mp:' prefix or 'external' proxying 
+            // This bypasses the INVALID_URL check that rejected the raw fastly link
             const rawImg = track.image?.[3]?.["#text"];
-            const cleanImg = sanitizeImageUrl(rawImg);
-            
-            if (cleanImg) {
+            if (rawImg && rawImg.includes('http')) {
                 try {
-                    pr.setAssetsLargeImage(cleanImg);
-                    console.log(`[DEBUG] Image set: ${cleanImg}`);
+                    // We strip the protocol and use the Discord external proxy format
+                    const proxyImg = `mp:external/${rawImg.replace(/^https?:\/\//, "")}`;
+                    pr.setAssetsLargeImage(proxyImg);
+                    console.log(`[DEBUG] Proxy Image Set: ${proxyImg}`);
                 } catch (e) {
-                    console.log(`[ERROR] Library rejected Image URL: ${e.message}`);
+                    // Fallback to raw if proxy fails
+                    pr.setAssetsLargeImage(rawImg.replace('http:', 'https:'));
                 }
             }
-            
+
             if (track.album?.["#text"]) pr.setAssetsLargeText(track.album["#text"]);
             pr.setAssetsSmallImage('lastfm-small');
 
-            // 3. Button Handling
             if (track.url && track.url.startsWith('http')) {
                 pr.addButton('View on Last.fm', track.url);
             }
 
-            // Apply Presence
             client.user.setPresence({ activities: [pr] });
             console.log(`[${new Date().toLocaleTimeString()}] ✅ Presence Updated!`);
         } else {
             client.user.setPresence({ activities: [] });
-            console.log(`[${new Date().toLocaleTimeString()}] ⏸️ Idle - Presence Cleared.`);
+            console.log(`[${new Date().toLocaleTimeString()}] ⏸️ Idle.`);
         }
     } catch (error) {
-        // Silencing common network timeouts to keep logs clean
-        if (error.code === 'ECONNABORTED') {
-            console.log(`[DEBUG] Last.fm request timed out. Retrying next cycle.`);
-        } else {
-            console.error(`[CRITICAL ERROR] ${error.message}`);
-        }
+        console.error(`[ERROR] Cycle failed: ${error.message}`);
     }
 }
 
