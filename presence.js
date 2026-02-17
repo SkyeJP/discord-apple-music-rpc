@@ -1,72 +1,58 @@
 require('dotenv').config();
 const { Client, RichPresence } = require('discord.js-selfbot-v13');
-const axios = require('axios');
+const fetch = require('node-fetch'); // Switched to node-fetch
 
 const client = new Client();
 
-// Cleaning utility
-const clean = (str) => str ? str.replace(/[^a-zA-Z0-9_.-]/g, '') : "";
-
 const TOKEN = process.env.DISCORD_TOKEN ? process.env.DISCORD_TOKEN.trim() : "";
-const LASTFM_USER = clean(process.env.LASTFM_USER);
-const LASTFM_API_KEY = clean(process.env.LASTFM_API_KEY);
-const DISCORD_APP_ID = clean(process.env.DISCORD_APP_ID) || "1108588077900898414";
+const LASTFM_USER = process.env.LASTFM_USER ? process.env.LASTFM_USER.trim() : "";
+const LASTFM_API_KEY = process.env.LASTFM_API_KEY ? process.env.LASTFM_API_KEY.trim() : "";
+const DISCORD_APP_ID = process.env.DISCORD_APP_ID || "1108588077900898414";
 
 async function updatePresence() {
-    // Manually defined URL - No variables inside the string to test if it's a parsing error
-    const base = "http://ws.audioscrobbler.com/2.0/";
-    
     try {
-        console.log(`[${new Date().toLocaleTimeString()}] Fetching for user: ${LASTFM_USER}`);
+        // Construct the URL using pure objects to bypass string parsing errors
+        const params = new URLSearchParams();
+        params.append("method", "user.getrecenttracks");
+        params.append("user", LASTFM_USER);
+        params.append("api_key", LASTFM_API_KEY);
+        params.append("format", "json");
+        params.append("limit", "1");
 
-        const response = await axios({
-            method: 'get',
-            url: base,
-            // Using the 'params' object is the safest way to avoid INVALID_URL
-            params: {
-                method: "user.getrecenttracks",
-                user: LASTFM_USER,
-                api_key: LASTFM_API_KEY,
-                format: "json",
-                limit: 1
-            },
-            timeout: 15000
-        });
+        const targetUrl = `http://ws.audioscrobbler.com/2.0/?${params.toString()}`;
+        
+        // Log it so we can verify there are no hidden %0D (carriage returns)
+        console.log(`[${new Date().toLocaleTimeString()}] Requesting: ${targetUrl}`);
 
-        const data = response.data;
-        if (!data?.recenttracks?.track) return;
+        const response = await fetch(targetUrl, { timeout: 10000 });
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        
+        const data = await response.json();
+        const track = data?.recenttracks?.track;
+        if (!track) return;
 
-        let track = data.recenttracks.track;
-        const isPlaying = Array.isArray(track)
-            ? track[0]?.["@attr"]?.nowplaying === "true"
-            : track?.["@attr"]?.nowplaying === "true";
+        const currentTrack = Array.isArray(track) ? track[0] : track;
+        const isPlaying = currentTrack?.["@attr"]?.nowplaying === "true";
 
         if (isPlaying) {
-            if (Array.isArray(track)) track = track[0];
-
             const pr = new RichPresence(client)
                 .setApplicationId(DISCORD_APP_ID)
                 .setType('LISTENING')
-                .setName(track.name)
-                .setDetails(track.name)
-                .setState(`by ${track.artist?.["#text"] || "Unknown"}`)
-                .setAssetsLargeImage(track.image[3]?.["#text"])
+                .setName(currentTrack.name)
+                .setDetails(currentTrack.name)
+                .setState(`by ${currentTrack.artist?.["#text"] || "Unknown"}`)
+                .setAssetsLargeImage(currentTrack.image[3]?.["#text"])
                 .setAssetsSmallImage('lastfm-small')
-                .addButton('View on Last.fm', track.url);
+                .addButton('View on Last.fm', currentTrack.url);
 
             client.user.setPresence({ activities: [pr] });
-            console.log(`✅ Success: ${track.name}`);
+            console.log(`✅ Success: ${currentTrack.name}`);
         } else {
             client.user.setPresence({ activities: [] });
             console.log("⏸️ Idle.");
         }
     } catch (error) {
-        // This will print the exact URL that AXIOS tried to use
-        if (error.config) {
-            console.error("❌ Failed URL:", axios.getUri(error.config));
-        }
-        console.error("❌ Error Type:", error.code);
-        console.error("❌ Message:", error.message);
+        console.error("❌ Process Error:", error.message);
     }
 }
 
