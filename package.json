@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "presence.js",
   "dependencies": {
-    "axios": "^1.6.0",
+    "node-fetch": "^2.7.0",
     "discord.js-selfbot-v13": "^3.4.4",
     "dotenv": "^16.3.1"
   },
